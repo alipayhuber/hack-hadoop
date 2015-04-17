@@ -1,0 +1,40 @@
+From f319a4911883b7fbacaa87efaf493bba78ba53d0 Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Fri, 11 Jul 2014 01:28:47 +0000
+Subject: [PATCH 807/816] HDFS-6640. Syntax for MKDIRS, CREATESYMLINK, and SETXATTR are given wrongly in WebHdfs document (missed webhdfs/v1). Contributed by Stephen Chu.
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/trunk@1609603 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit 9eb3756b9c0fd34f7b6b7dc91a20c21da7ea2969)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/site/apt/WebHDFS.apt.vm
+---
+ .../hadoop-hdfs/src/site/apt/WebHDFS.apt.vm        |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/WebHDFS.apt.vm b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/WebHDFS.apt.vm
+index 48bcca3..c4ddf73 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/WebHDFS.apt.vm
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/WebHDFS.apt.vm
+@@ -367,7 +367,7 @@ Hello, webhdfs user!
+   * Submit a HTTP PUT request.
+ 
+ +---------------------------------
+-curl -i -X PUT "http://<HOST>:<PORT>/<PATH>?op=MKDIRS[&permission=<OCTAL>]"
++curl -i -X PUT "http://<HOST>:<PORT>/webhdfs/v1/<PATH>?op=MKDIRS[&permission=<OCTAL>]"
+ +---------------------------------
+ 
+   The client receives a response with a {{{Boolean JSON Schema}<<<boolean>>> JSON object}}:
+@@ -392,7 +392,7 @@ Transfer-Encoding: chunked
+   * Submit a HTTP PUT request.
+ 
+ +---------------------------------
+-curl -i -X PUT "http://<HOST>:<PORT>/<PATH>?op=CREATESYMLINK
++curl -i -X PUT "http://<HOST>:<PORT>/webhdfs/v1/<PATH>?op=CREATESYMLINK
+                               &destination=<PATH>[&createParent=<true|false>]"
+ +---------------------------------
+ 
+-- 
+1.7.0.4
+

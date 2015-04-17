@@ -1,0 +1,51 @@
+From c49cf077c95a1ba1c01beac97488b1e55c381cef Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Mon, 18 Aug 2014 18:25:50 +0000
+Subject: [PATCH 814/816] MAPREDUCE-6012. DBInputSplit creates invalid ranges on Oracle. (Wei Yan via kasha)
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/trunk@1618694 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit d67cfc64ed1c002f4cddabfe1cca9143e89a1290)
+---
+ .../mapreduce/lib/db/OracleDBRecordReader.java     |    7 +++----
+ .../hadoop/mapreduce/lib/db/TestDbClasses.java     |    2 +-
+ 2 files changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/lib/db/OracleDBRecordReader.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/lib/db/OracleDBRecordReader.java
+index 12b62cd..61ff156 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/lib/db/OracleDBRecordReader.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/lib/db/OracleDBRecordReader.java
+@@ -81,15 +81,14 @@ protected String getSelectQuery() {
+         
+     try {
+       DBInputFormat.DBInputSplit split = getSplit();
+-      if (split.getLength() > 0 && split.getStart() > 0){
++      if (split.getLength() > 0){
+         String querystring = query.toString();
+ 
+         query = new StringBuilder();
+         query.append("SELECT * FROM (SELECT a.*,ROWNUM dbif_rno FROM ( ");
+         query.append(querystring);
+-        query.append(" ) a WHERE rownum <= ").append(split.getStart());
+-        query.append(" + ").append(split.getLength());
+-        query.append(" ) WHERE dbif_rno >= ").append(split.getStart());
++        query.append(" ) a WHERE rownum <= ").append(split.getEnd());
++        query.append(" ) WHERE dbif_rno > ").append(split.getStart());
+       }
+     } catch (IOException ex) {
+       // ignore, will not throw.
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapreduce/lib/db/TestDbClasses.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapreduce/lib/db/TestDbClasses.java
+index 8c8fcfa..772552c 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapreduce/lib/db/TestDbClasses.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapreduce/lib/db/TestDbClasses.java
+@@ -110,7 +110,7 @@ public void testOracleDBRecordReader() throws Exception {
+         splitter, NullDBWritable.class, configuration, connect,
+         dbConfiguration, "condition", fields, "table");
+     assertEquals(
+-        "SELECT * FROM (SELECT a.*,ROWNUM dbif_rno FROM ( SELECT f1, f2 FROM table WHERE condition ORDER BY Order ) a WHERE rownum <= 1 + 9 ) WHERE dbif_rno >= 1",
++        "SELECT * FROM (SELECT a.*,ROWNUM dbif_rno FROM ( SELECT f1, f2 FROM table WHERE condition ORDER BY Order ) a WHERE rownum <= 10 ) WHERE dbif_rno > 1",
+         recorder.getSelectQuery());
+   }
+ 
+-- 
+1.7.0.4
+

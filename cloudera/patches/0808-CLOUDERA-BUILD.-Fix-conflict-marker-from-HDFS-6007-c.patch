@@ -1,0 +1,22 @@
+From f9cbc7322f8bd84f7c28bad6c18fbe36ad6de9b4 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <andrew.wang@cloudera.com>
+Date: Mon, 18 Aug 2014 17:42:10 -0700
+Subject: [PATCH 808/816] CLOUDERA-BUILD. Fix conflict marker from HDFS-6007 cherry-pick.
+
+---
+ .../src/main/resources/hdfs-default.xml            |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index cedb350..3eeb57c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -1915,5 +1915,4 @@
+   </description>
+ </property>
+ 
+->>>>>>> f8c98c4... HDFS-6007. Update documentation about short-circuit local reads (iwasakims via cmccabe)
+ </configuration>
+-- 
+1.7.0.4
+

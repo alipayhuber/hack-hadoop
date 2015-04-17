@@ -1,0 +1,165 @@
+From 70f82d2af4ecc38b36ed09c192a9afa3149d461d Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Tue, 22 Jul 2014 22:45:05 +0000
+Subject: [PATCH 811/816] YARN-2273. NPE in ContinuousScheduling thread when we lose a node. (Wei Yan via kasha)
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/branches/branch-2@1612721 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit 8209a21bd388554e643cf985a9d8350f463e3f1b)
+
+Conflicts:
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairScheduler.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+
+(cherry picked from commit 38f5b3a9a9f33e3ea0a8ad7202279274e90347d8)
+(cherry picked from commit 39528fbe5022f31e71b2bb0bbf4898396d48eb71)
+---
+ .../scheduler/fair/FairScheduler.java              |   65 +++++++++++---------
+ .../scheduler/fair/TestFairScheduler.java          |   37 +++++++++++-
+ 2 files changed, 72 insertions(+), 30 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairScheduler.java
+index 2aaa608..7f88a3e 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairScheduler.java
+@@ -1018,38 +1018,30 @@ private synchronized void nodeUpdate(RMNode nm) {
+     }
+   }
+ 
+-  private void continuousScheduling() {
+-    while (true) {
+-      List<NodeId> nodeIdList = new ArrayList<NodeId>(nodes.keySet());
+-      // Sort the nodes by space available on them, so that we offer
+-      // containers on emptier nodes first, facilitating an even spread. This
+-      // requires holding the scheduler lock, so that the space available on a
+-      // node doesn't change during the sort.
+-      synchronized (this) {
+-        Collections.sort(nodeIdList, nodeAvailableResourceComparator);
+-      }
+-
+-      // iterate all nodes
+-      for (NodeId nodeId : nodeIdList) {
+-        if (nodes.containsKey(nodeId)) {
+-          FSSchedulerNode node = nodes.get(nodeId);
+-          try {
+-            if (Resources.fitsIn(minimumAllocation,
+-                    node.getAvailableResource())) {
+-              attemptScheduling(node);
+-            }
+-          } catch (Throwable ex) {
+-            LOG.warn("Error while attempting scheduling for node " + node +
+-                    ": " + ex.toString(), ex);
++  void continuousSchedulingAttempt() {
++    List<NodeId> nodeIdList = new ArrayList<NodeId>(nodes.keySet());
++    // Sort the nodes by space available on them, so that we offer
++    // containers on emptier nodes first, facilitating an even spread. This
++    // requires holding the scheduler lock, so that the space available on a
++    // node doesn't change during the sort.
++    synchronized (this) {
++      Collections.sort(nodeIdList, nodeAvailableResourceComparator);
++    }
++
++    // iterate all nodes
++    for (NodeId nodeId : nodeIdList) {
++      if (nodes.containsKey(nodeId)) {
++        FSSchedulerNode node = nodes.get(nodeId);
++        try {
++          if (Resources.fitsIn(minimumAllocation,
++              node.getAvailableResource())) {
++            attemptScheduling(node);
+           }
++        } catch (Throwable ex) {
++          LOG.warn("Error while attempting scheduling for node " + node +
++              ": " + ex.toString(), ex);
+         }
+       }
+-      try {
+-        Thread.sleep(getContinuousSchedulingSleepMs());
+-      } catch (InterruptedException e) {
+-        LOG.warn("Error while doing sleep in continuous scheduling: " +
+-                e.toString(), e);
+-      }
+     }
+   }
+ 
+@@ -1058,6 +1050,12 @@ private void continuousScheduling() {
+ 
+     @Override
+     public int compare(NodeId n1, NodeId n2) {
++      if (!nodes.containsKey(n1)) {
++        return 1;
++      }
++      if (!nodes.containsKey(n2)) {
++        return -1;
++      }
+       return RESOURCE_CALCULATOR.compare(clusterCapacity,
+               nodes.get(n2).getAvailableResource(),
+               nodes.get(n1).getAvailableResource());
+@@ -1320,7 +1318,16 @@ public synchronized void reinitialize(Configuration conf, RMContext rmContext)
+           new Runnable() {
+             @Override
+             public void run() {
+-              continuousScheduling();
++              while (!Thread.currentThread().isInterrupted()) {
++                try {
++                  continuousSchedulingAttempt();
++                  Thread.sleep(getContinuousSchedulingSleepMs());
++                } catch (InterruptedException e) {
++                  LOG.error("Continuous scheduling thread interrupted. Exiting. ",
++                      e);
++                  return;
++                }
++              }
+             }
+           }
+         );
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+index 6b50cab..9b3cb69 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+@@ -2616,7 +2616,42 @@ public void testContinuousScheduling() throws Exception {
+     Assert.assertEquals(2, nodes.size());
+   }
+ 
+-  
++  @Test
++  public void testContinuousSchedulingWithNodeRemoved() throws Exception {
++    // Disable continuous scheduling, will invoke continuous scheduling once manually
++    scheduler.reinitialize(conf, resourceManager.getRMContext());
++    Assert.assertTrue("Continuous scheduling should be disabled.",
++        !scheduler.isContinuousSchedulingEnabled());
++
++    // Add two nodes
++    RMNode node1 =
++        MockNodes.newNodeInfo(1, Resources.createResource(8 * 1024, 8), 1,
++            "127.0.0.1");
++    NodeAddedSchedulerEvent nodeEvent1 = new NodeAddedSchedulerEvent(node1);
++    scheduler.handle(nodeEvent1);
++    RMNode node2 =
++        MockNodes.newNodeInfo(1, Resources.createResource(8 * 1024, 8), 2,
++            "127.0.0.2");
++    NodeAddedSchedulerEvent nodeEvent2 = new NodeAddedSchedulerEvent(node2);
++    scheduler.handle(nodeEvent2);
++    Assert.assertEquals("We should have two alive nodes.",
++        2, scheduler.getNumClusterNodes());
++
++    // Remove one node
++    NodeRemovedSchedulerEvent removeNode1 = new NodeRemovedSchedulerEvent(node1);
++    scheduler.handle(removeNode1);
++    Assert.assertEquals("We should only have one alive node.",
++        1, scheduler.getNumClusterNodes());
++
++    // Invoke the continuous scheduling once
++    try {
++      scheduler.continuousSchedulingAttempt();
++    } catch (Exception e) {
++      fail("Exception happened when doing continuous scheduling. " +
++        e.toString());
++    }
++  }
++
+   @Test
+   public void testDontAllowUndeclaredPools() throws Exception{
+     conf.setBoolean(FairSchedulerConfiguration.ALLOW_UNDECLARED_POOLS, false);
+-- 
+1.7.0.4
+

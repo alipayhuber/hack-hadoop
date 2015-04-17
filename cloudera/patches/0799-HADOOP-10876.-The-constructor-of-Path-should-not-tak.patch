@@ -1,0 +1,101 @@
+From dd85b8a72ac4df0b6f539046c5d5b86f370fb988 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Tue, 29 Jul 2014 00:44:12 +0000
+Subject: [PATCH 799/816] HADOOP-10876. The constructor of Path should not take an empty URL as a parameter. Contributed by Zhihai Xu.
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/trunk@1614230 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit 44cfbafdd1189c818b74e8e2f8c7b9fcd4cd7e0b)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+(cherry picked from commit 5f799a30385ae3d5ce6394a78ec64639410021b6)
+---
+ .../src/main/java/org/apache/hadoop/fs/Path.java   |   16 ++++++++++++-
+ .../test/java/org/apache/hadoop/fs/TestPath.java   |   24 ++++++++++++++++++++
+ 2 files changed, 39 insertions(+), 1 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
+index 54ddeda..0e8db1d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
+@@ -128,7 +128,20 @@ private void checkPathArg( String path ) throws IllegalArgumentException {
+            "Can not create a Path from an empty string");
+     }   
+   }
+-  
++
++  /** check URI parameter of Path constructor. */
++  private void checkPathArg(URI aUri) throws IllegalArgumentException {
++    // disallow construction of a Path from an empty URI
++    if (aUri == null) {
++      throw new IllegalArgumentException(
++          "Can not create a Path from a null URI");
++    }
++    if (aUri.toString().isEmpty()) {
++      throw new IllegalArgumentException(
++          "Can not create a Path from an empty URI");
++    }
++  }
++
+   /** Construct a path from a String.  Path strings are URIs, but with
+    * unescaped elements and some additional normalization. */
+   public Path(String pathString) throws IllegalArgumentException {
+@@ -176,6 +189,7 @@ public Path(String pathString) throws IllegalArgumentException {
+    * Construct a path from a URI
+    */
+   public Path(URI aUri) {
++    checkPathArg(aUri);
+     uri = aUri.normalize();
+   }
+   
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestPath.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestPath.java
+index 94908da..54d25c9 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestPath.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestPath.java
+@@ -26,11 +26,13 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.io.AvroTestUtil;
++import org.apache.hadoop.test.GenericTestUtils;
+ import org.apache.hadoop.util.Shell;
+ 
+ import com.google.common.base.Joiner;
+ 
+ import junit.framework.TestCase;
++import static org.junit.Assert.fail;
+ 
+ public class TestPath extends TestCase {
+   /**
+@@ -305,6 +307,28 @@ public void testURI() throws URISyntaxException, IOException {
+     // if the child uri is absolute path
+     assertEquals("foo://bar/fud#boo", new Path(new Path(new URI(
+         "foo://bar/baz#bud")), new Path(new URI("/fud#boo"))).toString());
++
++    // empty URI
++    URI uri3 = new URI("");
++    assertEquals("", uri3.toString());
++    try {
++      path = new Path(uri3);
++      fail("Expected exception for empty URI");
++    } catch (IllegalArgumentException e) {
++      // expect to receive an IllegalArgumentException
++      GenericTestUtils.assertExceptionContains("Can not create a Path"
++          + " from an empty URI", e);
++    }
++    // null URI
++    uri3 = null;
++    try {
++      path = new Path(uri3);
++      fail("Expected exception for null URI");
++    } catch (IllegalArgumentException e) {
++      // expect to receive an IllegalArgumentException
++      GenericTestUtils.assertExceptionContains("Can not create a Path"
++          + " from a null URI", e);
++    }
+   }
+ 
+   /** Test URIs created from Path objects */
+-- 
+1.7.0.4
+

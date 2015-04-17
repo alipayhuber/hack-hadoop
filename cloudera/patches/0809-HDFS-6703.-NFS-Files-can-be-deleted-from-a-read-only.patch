@@ -1,0 +1,183 @@
+From 3f79212d6dc94e273593665d12e2d2e2be1112b6 Mon Sep 17 00:00:00 2001
+From: Brandon Li <brandonli@apache.org>
+Date: Tue, 22 Jul 2014 20:53:50 +0000
+Subject: [PATCH 809/816] HDFS-6703. NFS: Files can be deleted from a read-only mount. Contributed by Srikanth Upputuri
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/trunk@1612702 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit 18be291e7d5f55465d697cb203ea17771bfabed6)
+---
+ .../hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java       |   20 ++-
+ .../hdfs/nfs/nfs3/TestClientAccessPrivilege.java   |  117 ++++++++++++++++++++
+ 2 files changed, 130 insertions(+), 7 deletions(-)
+ create mode 100644 hadoop-hdfs-project/hadoop-hdfs-nfs/src/test/java/org/apache/hadoop/hdfs/nfs/nfs3/TestClientAccessPrivilege.java
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
+index 96a4c49..f254f50 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
+@@ -1051,8 +1051,12 @@ public READDIR3Response mknod(XDR xdr, RpcInfo info) {
+   
+   @Override
+   public REMOVE3Response remove(XDR xdr, RpcInfo info) {
++    return remove(xdr, getSecurityHandler(info), info.remoteAddress());
++  }
++ 
++  @VisibleForTesting
++  REMOVE3Response remove(XDR xdr, SecurityHandler securityHandler, SocketAddress remoteAddress) {
+     REMOVE3Response response = new REMOVE3Response(Nfs3Status.NFS3_OK);
+-    SecurityHandler securityHandler = getSecurityHandler(info);
+     DFSClient dfsClient = clientCache.getDfsClient(securityHandler.getUser());
+     if (dfsClient == null) {
+       response.setStatus(Nfs3Status.NFS3ERR_SERVERFAULT);
+@@ -1083,17 +1087,19 @@ public REMOVE3Response remove(XDR xdr, RpcInfo info) {
+         return new REMOVE3Response(Nfs3Status.NFS3ERR_STALE);
+       }
+ 
++      WccData errWcc = new WccData(Nfs3Utils.getWccAttr(preOpDirAttr),
++          preOpDirAttr);
++      if (!checkAccessPrivilege(remoteAddress, AccessPrivilege.READ_WRITE)) {
++        return new REMOVE3Response(Nfs3Status.NFS3ERR_ACCES, errWcc);
++      }
++
+       String fileIdPath = dirFileIdPath + "/" + fileName;
+       HdfsFileStatus fstat = Nfs3Utils.getFileStatus(dfsClient, fileIdPath);
+       if (fstat == null) {
+-        WccData dirWcc = new WccData(Nfs3Utils.getWccAttr(preOpDirAttr),
+-            preOpDirAttr);
+-        return new REMOVE3Response(Nfs3Status.NFS3ERR_NOENT, dirWcc);
++        return new REMOVE3Response(Nfs3Status.NFS3ERR_NOENT, errWcc);
+       }
+       if (fstat.isDir()) {
+-        WccData dirWcc = new WccData(Nfs3Utils.getWccAttr(preOpDirAttr),
+-            preOpDirAttr);
+-        return new REMOVE3Response(Nfs3Status.NFS3ERR_ISDIR, dirWcc);
++        return new REMOVE3Response(Nfs3Status.NFS3ERR_ISDIR, errWcc);
+       }
+ 
+       boolean result = dfsClient.delete(fileIdPath, false);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-nfs/src/test/java/org/apache/hadoop/hdfs/nfs/nfs3/TestClientAccessPrivilege.java b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/test/java/org/apache/hadoop/hdfs/nfs/nfs3/TestClientAccessPrivilege.java
+new file mode 100644
+index 0000000..9ce9910
+--- /dev/null
++++ b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/test/java/org/apache/hadoop/hdfs/nfs/nfs3/TestClientAccessPrivilege.java
+@@ -0,0 +1,117 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.hdfs.nfs.nfs3;
++
++import static org.junit.Assert.assertEquals;
++
++import java.io.IOException;
++import java.net.InetSocketAddress;
++
++import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hdfs.DFSTestUtil;
++import org.apache.hadoop.hdfs.DistributedFileSystem;
++import org.apache.hadoop.hdfs.MiniDFSCluster;
++import org.apache.hadoop.hdfs.nfs.conf.NfsConfiguration;
++import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
++import org.apache.hadoop.hdfs.server.namenode.NameNode;
++import org.apache.hadoop.nfs.nfs3.FileHandle;
++import org.apache.hadoop.nfs.nfs3.Nfs3Status;
++import org.apache.hadoop.nfs.nfs3.response.REMOVE3Response;
++import org.apache.hadoop.oncrpc.XDR;
++import org.apache.hadoop.oncrpc.security.SecurityHandler;
++import org.apache.hadoop.security.authorize.ProxyUsers;
++import org.junit.AfterClass;
++import org.junit.Before;
++import org.junit.BeforeClass;
++import org.junit.Test;
++import org.mockito.Mockito;
++
++public class TestClientAccessPrivilege {
++  static MiniDFSCluster cluster = null;
++  static NfsConfiguration config = new NfsConfiguration();
++  static DistributedFileSystem hdfs;
++  static NameNode nn;
++  static String testdir = "/tmp";
++  static SecurityHandler securityHandler;
++
++  @BeforeClass
++  public static void setup() throws Exception {
++
++    String currentUser = System.getProperty("user.name");
++    config.set("hadoop.proxyuser." + currentUser + ".groups", "*");
++    config.set("hadoop.proxyuser." + currentUser + ".hosts", "*");
++    ProxyUsers.refreshSuperUserGroupsConfiguration(config);
++    cluster = new MiniDFSCluster.Builder(config).numDataNodes(1).build();
++    cluster.waitActive();
++    hdfs = cluster.getFileSystem();
++    nn = cluster.getNameNode();
++
++    // Use ephemeral port in case tests are running in parallel
++    config.setInt("nfs3.mountd.port", 0);
++    config.setInt("nfs3.server.port", 0);
++
++    securityHandler = Mockito.mock(SecurityHandler.class);
++    Mockito.when(securityHandler.getUser()).thenReturn(
++        System.getProperty("user.name"));
++  }
++
++  @AfterClass
++  public static void shutdown() throws Exception {
++    if (cluster != null) {
++      cluster.shutdown();
++    }
++  }
++
++  @Before
++  public void createFiles() throws IllegalArgumentException, IOException {
++    hdfs.delete(new Path(testdir), true);
++    hdfs.mkdirs(new Path(testdir));
++    DFSTestUtil.createFile(hdfs, new Path(testdir + "/f1"), 0, (short) 1, 0);
++  }
++
++  @Test(timeout = 60000)
++  public void testClientAccessPrivilegeForRemove() throws Exception {
++    // Configure ro access for nfs1 service
++    config.set("dfs.nfs.exports.allowed.hosts", "* ro");
++
++    // Start nfs
++    Nfs3 nfs = new Nfs3(config);
++    nfs.startServiceInternal(false);
++
++    RpcProgramNfs3 nfsd = (RpcProgramNfs3) nfs.getRpcProgram();
++
++    // Create a remove request
++    HdfsFileStatus status = nn.getRpcServer().getFileInfo(testdir);
++    long dirId = status.getFileId();
++
++    XDR xdr_req = new XDR();
++    FileHandle handle = new FileHandle(dirId);
++    handle.serialize(xdr_req);
++    xdr_req.writeString("f1");
++
++    // Remove operation
++    REMOVE3Response response = nfsd.remove(xdr_req.asReadOnlyWrap(),
++        securityHandler, new InetSocketAddress("localhost", 1234));
++
++    // Assert on return code
++    assertEquals("Incorrect return code", Nfs3Status.NFS3ERR_ACCES,
++        response.getStatus());
++
++  }
++
++}
+-- 
+1.7.0.4
+

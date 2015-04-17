@@ -1,0 +1,49 @@
+From 671f5d7448fa0f062b6b0371c612ccd02484b955 Mon Sep 17 00:00:00 2001
+From: Zhihai Xu <zxu@cloudera.com>
+Date: Wed, 6 Aug 2014 18:15:30 -0700
+Subject: [PATCH 802/816] YARN-2359. Application hangs when it fails to launch AM container.
+ fix the compilation error after backport.
+
+(cherry picked from commit 7191ac5ae95c36726edafe71b405f05679d0fc45)
+---
+ .../rmapp/attempt/RMAppAttemptImpl.java            |    2 +-
+ .../rmapp/attempt/TestRMAppAttemptTransitions.java |    5 -----
+ 2 files changed, 1 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+index 01c9f16..954eb7b 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+@@ -214,7 +214,7 @@
+           RMAppAttemptState.FINAL_SAVING,
+           RMAppAttemptEventType.CONTAINER_FINISHED,
+           new FinalSavingTransition(
+-            new AMContainerCrashedBeforeRunningTransition(),
++            new AMContainerCrashedTransition(),
+             RMAppAttemptState.FAILED))
+ 
+        // Transitions from ALLOCATED_SAVING State
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/TestRMAppAttemptTransitions.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/TestRMAppAttemptTransitions.java
+index 46de42e..773ed9b 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/TestRMAppAttemptTransitions.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/TestRMAppAttemptTransitions.java
+@@ -764,16 +764,11 @@ public void testAMCrashAtScheduled() {
+     // The state should be FINAL_SAVING with previous state SCHEDULED
+     applicationAttempt.handle(new RMAppAttemptContainerFinishedEvent(
+         applicationAttempt.getAppAttemptId(), cs));
+-    // createApplicationAttemptState will return previous state (SCHEDULED),
+-    // if the current state is FINAL_SAVING.
+-    assertEquals(YarnApplicationAttemptState.SCHEDULED,
+-        applicationAttempt.createApplicationAttemptState());
+     // send ATTEMPT_UPDATE_SAVED event,
+     // verify the state is changed to state FAILED.
+     sendAttemptUpdateSavedEvent(applicationAttempt);
+     assertEquals(RMAppAttemptState.FAILED,
+         applicationAttempt.getAppAttemptState());
+-    verifyApplicationAttemptFinished(RMAppAttemptState.FAILED);
+   }
+ 
+   @Test
+-- 
+1.7.0.4
+
